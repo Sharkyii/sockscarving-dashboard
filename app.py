@@ -3,8 +3,8 @@ import os
 import pandas as pd
 import streamlit as st
 
-from modules import theme, data_processing as dp, ai_insights, ai_chart_builder as acb, auth
-from modules import charts_orders, charts_delivery, charts_products, charts_customers, charts_financial, charts_advanced
+from modules import theme, data_processing as dp, ai_insights, ai_chart_builder as acb, auth, courier_data as cd
+from modules import charts_orders, charts_delivery, charts_products, charts_customers, charts_financial, charts_advanced, charts_logistics
 
 st.set_page_config(
     page_title="SocksCarving Analytics",
@@ -45,6 +45,27 @@ selected_local = st.sidebar.multiselect(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("## Courier / Shipment Data (optional)")
+st.sidebar.caption("Shiprocket shipment-level exports — powers the Courier & Logistics tab.")
+
+uploaded_courier_files = st.sidebar.file_uploader(
+    "Upload Shiprocket shipment export(s) — CSV",
+    type=["csv"],
+    accept_multiple_files=True,
+    key="courier_uploader",
+)
+
+EXPORT_DIR = os.path.join(PROJECT_ROOT, "export")
+candidate_courier_files = []
+if os.path.isdir(EXPORT_DIR):
+    candidate_courier_files = sorted(f for f in os.listdir(EXPORT_DIR) if f.lower().endswith(".csv"))
+selected_local_courier = st.sidebar.multiselect(
+    "Local files in export/",
+    options=candidate_courier_files,
+    default=candidate_courier_files,
+)
+
+st.sidebar.markdown("---")
 api_key_present = bool(ai_insights.get_api_key())
 if api_key_present:
     st.sidebar.success("Claude API key detected — AI summaries enabled.")
@@ -66,6 +87,19 @@ elif selected_local:
     paths_with_mtime = [(p, os.path.getmtime(p)) for p in paths]
     with st.spinner("Loading local files..."):
         raw = dp.load_local_files(paths_with_mtime)
+
+courier_raw = pd.DataFrame()
+if uploaded_courier_files:
+    courier_bundle = [(f.name, f.getvalue()) for f in uploaded_courier_files]
+    with st.spinner("Loading and merging courier export files..."):
+        courier_raw = cd.load_and_merge_courier(courier_bundle)
+elif selected_local_courier:
+    courier_paths = [os.path.join(EXPORT_DIR, f) for f in selected_local_courier]
+    courier_paths_with_mtime = [(p, os.path.getmtime(p)) for p in courier_paths]
+    with st.spinner("Loading local courier files..."):
+        courier_raw = cd.load_courier_exports(courier_paths_with_mtime)
+
+courier_data = cd.build_courier_dataset(courier_raw) if not courier_raw.empty else {}
 
 # ---------------------------------------------------------------------------
 # Header
@@ -98,8 +132,8 @@ st.caption(f"Loaded **{len(raw):,}** rows from **{len(uploaded_files) if uploade
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_overview, tab_orders, tab_delivery, tab_products, tab_customers, tab_financial, tab_advanced, tab_ai = st.tabs(
-    ["Overview", "Orders", "Delivery", "Products", "Customers", "Financial & Marketing", "Advanced Analytics", "Ask AI for a Chart"]
+tab_overview, tab_orders, tab_delivery, tab_logistics, tab_products, tab_customers, tab_financial, tab_advanced, tab_ai = st.tabs(
+    ["Overview", "Orders", "Delivery", "Courier & Logistics", "Products", "Customers", "Financial & Marketing", "Advanced Analytics", "Ask AI for a Chart"]
 )
 
 with tab_overview:
@@ -150,6 +184,9 @@ with tab_orders:
 
 with tab_delivery:
     charts_delivery.render(data)
+
+with tab_logistics:
+    charts_logistics.render(courier_data)
 
 with tab_products:
     charts_products.render(data)
